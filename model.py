@@ -17,9 +17,19 @@ rookie_roi_df['BMI'] = (rookie_roi_df['weight'] * 703) / (rookie_roi_df['height'
 # feaature engineering
 rookie_roi_df['BMI_Age_Ratio'] = rookie_roi_df['BMI'] / rookie_roi_df['age']
 
+# 1. Size-Adjusted Speed (Speed Score)
+rookie_roi_df['speed_score'] = (rookie_roi_df['weight'] * 200) / (rookie_roi_df['forty']**4)
+
+# 2. Explosive Burst (Size-Adjusted)
+rookie_roi_df['burst_score'] = (rookie_roi_df['vertical'] + rookie_roi_df['broad_jump']) * rookie_roi_df['weight']
+
+# 3. Density-Adjusted Power (Your Vertical/BMI interaction)
+rookie_roi_df['power_density'] = rookie_roi_df['vertical'] / rookie_roi_df['BMI']
+
+# 4. Agility Premium
+rookie_roi_df['agility_score'] = rookie_roi_df['weight'] / rookie_roi_df['cone']
 features = [
     'pick',
-    'age',
     'weight',
     'height',
     'BMI_Age_Ratio',
@@ -28,19 +38,25 @@ features = [
     'broad_jump',
     'cone',
     'shuttle',
-    'bench'
+    'bench',
+    'speed_score',
+    'burst_score',
+    'power_density',
+    'agility_score',
+    'BMI'
     
 ]
-for col in features:
-    rookie_roi_df[col] = rookie_roi_df.groupby('position')[col].transform(lambda x: x.fillna(x.mean()))
 
-for col in features + ['BMI']:
+for col in features:
     rookie_roi_df[f'{col}_rel'] = rookie_roi_df.groupby('position')[col].transform(
         lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
     )
 
-features += [f'{col}_rel' for col in features]
-features.append('BMI_rel')
+final_features = ['pick', 'age'] 
+final_features.extend([f'{col}_rel' for col in features])
+
+for col in final_features:
+    rookie_roi_df[col] = rookie_roi_df.groupby('position')[col].transform(lambda x: x.fillna(x.mean()))
 # Fill the NaNs created by players who are the only ones at their position
 rookie_roi_df = rookie_roi_df.fillna(0)
 
@@ -54,9 +70,9 @@ rookie_roi_df = rookie_roi_df.fillna(0)
 # data cleaining
 
 
-X =  pd.concat([rookie_roi_df[features], position_dummies], axis=1) # Simple cleaning
-X[features].fillna(0)
-features += list(position_dummies.columns)
+X =  pd.concat([rookie_roi_df[final_features], position_dummies], axis=1) # Simple cleaning
+X[final_features].fillna(0)
+final_features += list(position_dummies.columns)
 
 # Calculate how good the player was compared to OTHER players at their position
 rookie_roi_df['roi_position_zscore'] = rookie_roi_df.groupby('position')['roi_ratio'].transform(
@@ -89,7 +105,7 @@ model.fit(X_train, y_train)
 
 # 4. GET THE TRUTH: Which features matter?
 importances = pd.DataFrame({
-    'feature': features,
+    'feature': final_features,
     'importance': model.feature_importances_
 }).sort_values('importance', ascending=False)
 
@@ -119,9 +135,9 @@ vc_preds = model.predict(X_test) # Your existing model predictions
 
 # 3. COMPARE THE HIT RATES
 def calculate_hits(preds, actuals):
-    top_25_actual = actuals.quantile(0.9)
-    top_25_pred = pd.Series(preds).quantile(0.9)
-    return ((actuals > top_25_actual) & (pd.Series(preds, index=actuals.index) > top_25_pred)).sum()
+    top_percentile_actual = actuals.quantile(0.75)
+    top_percentile_pred = pd.Series(preds).quantile(0.75)
+    return ((actuals > top_percentile_actual) & (pd.Series(preds, index=actuals.index) > top_percentile_pred)).sum()
 
 baseline_hits = calculate_hits(baseline_preds, y_test)
 vc_hits = calculate_hits(vc_preds, y_test)
