@@ -3,6 +3,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.ensemble import GradientBoostingRegressor
 import numpy as np
 
 rookie_roi_df = pd.read_csv('./outputs/rookie_roi.csv')
@@ -48,14 +49,23 @@ y = rookie_roi_df['roi_ratio']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # 3. Initialize and Train
-model = RandomForestRegressor(
-    n_estimators=100,      # More trees = more stability
-    max_depth=6,
-    max_features='sqrt',    # Forces trees to look at different features, reducing bias
-    min_samples_leaf=5,
+# model = RandomForestRegressor(
+#     n_estimators=100,      # More trees = more stability
+#     max_depth=6,
+#     max_features='sqrt',    # Forces trees to look at different features, reducing bias
+#     min_samples_leaf=5,
+#     random_state=42
+# )
+model = GradientBoostingRegressor(
+    loss='quantile',   # This activates the asymmetric loss!
+    alpha=0.9,        # 85th percentile (focuses on the ceiling)
+    n_estimators=150,
+    max_depth=4,
+    min_samples_leaf=8,
     random_state=42
 )
 model.fit(X_train, y_train)
+
 
 # 4. GET THE TRUTH: Which features matter?
 importances = pd.DataFrame({
@@ -71,9 +81,6 @@ print(importances)
 predictions = model.predict(X_test)
 
 # Calculate metrics
-print(f"MAE: {mean_absolute_error(y_test, predictions)}")
-print(f"R2 Score: {r2_score(y_test, predictions)}")
-
 top_25_actual = y_test.quantile(0.75)
 top_25_pred = pd.Series(predictions).quantile(0.75)
 
@@ -100,8 +107,6 @@ baseline_hits = calculate_hits(baseline_preds, y_test)
 vc_hits = calculate_hits(vc_preds, y_test)
 
 print(f"Heuristic Linear Regresion Hits: {baseline_hits}")
-r2 = r2_score(y_test, baseline_preds)
-print(f'lr r2 score:{r2}')
 print(f"VC Model (BMI/Age/Pick) Hits: {vc_hits}")
 
 
@@ -121,3 +126,4 @@ top_10_picks = results_df.sort_values(by='Predicted_ROI', ascending=False).head(
 
 print("--- TOP 10 VENTURE CAPITALIST PICKS (TEST DATA) ---")
 print(top_10_picks[['Player', 'Pick', 'Position', 'BMI_rel', 'Age', 'Predicted_ROI', 'Actual_ROI', 'Gem_detected']])
+results_df.to_csv('outputs/results.csv')
