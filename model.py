@@ -94,7 +94,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 # )
 model = GradientBoostingRegressor(
     loss='quantile',   # This activates the asymmetric loss!
-    alpha=0.6,        # 85th percentile (focuses on the ceiling)
+    alpha=0.67,        # 85th percentile (focuses on the ceiling)
     n_estimators=150,
     max_depth=4,
     min_samples_leaf=8,
