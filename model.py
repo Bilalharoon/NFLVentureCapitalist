@@ -11,6 +11,7 @@ rookie_roi_df = pd.read_csv('./outputs/rookie_roi.csv')
 # rookie_roi_df['draft_grade'] = rookie_roi_df['draft_grade'].fillna(rookie_roi_df['draft_grade'].median())
 rookie_roi_df = rookie_roi_df.drop_duplicates(subset=['pfr_player_name', 'pick'])
 
+position_dummies = pd.get_dummies(rookie_roi_df['position'])
 rookie_roi_df['BMI'] = (rookie_roi_df['weight'] * 703) / (rookie_roi_df['height']**2)
 
 # feaature engineering
@@ -21,8 +22,18 @@ features = [
     'age',
     'weight',
     'height',
-    'BMI_Age_Ratio'
+    'BMI_Age_Ratio',
+    'forty',
+    'vertical',
+    'broad_jump',
+    'cone',
+    'shuttle',
+    'bench'
+    
 ]
+for col in features:
+    rookie_roi_df[col] = rookie_roi_df.groupby('position')[col].transform(lambda x: x.fillna(x.mean()))
+
 for col in features + ['BMI']:
     rookie_roi_df[f'{col}_rel'] = rookie_roi_df.groupby('position')[col].transform(
         lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
@@ -42,9 +53,18 @@ rookie_roi_df = rookie_roi_df.fillna(0)
 
 # data cleaining
 
-X =  rookie_roi_df[features] # Simple cleaning
+
+X =  pd.concat([rookie_roi_df[features], position_dummies], axis=1) # Simple cleaning
 X[features].fillna(0)
-y = rookie_roi_df['roi_ratio']
+features += list(position_dummies.columns)
+
+# Calculate how good the player was compared to OTHER players at their position
+rookie_roi_df['roi_position_zscore'] = rookie_roi_df.groupby('position')['roi_ratio'].transform(
+    lambda x: (x - x.mean()) / x.std() if x.std() > 0 else 0
+)
+
+# Set this new relative metric as your target (y)
+y = rookie_roi_df['roi_position_zscore']
 # 2. Split into Training and Testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -58,7 +78,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 # )
 model = GradientBoostingRegressor(
     loss='quantile',   # This activates the asymmetric loss!
-    alpha=0.9,        # 85th percentile (focuses on the ceiling)
+    alpha=0.6,        # 85th percentile (focuses on the ceiling)
     n_estimators=150,
     max_depth=4,
     min_samples_leaf=8,
@@ -99,8 +119,8 @@ vc_preds = model.predict(X_test) # Your existing model predictions
 
 # 3. COMPARE THE HIT RATES
 def calculate_hits(preds, actuals):
-    top_25_actual = actuals.quantile(0.75)
-    top_25_pred = pd.Series(preds).quantile(0.75)
+    top_25_actual = actuals.quantile(0.9)
+    top_25_pred = pd.Series(preds).quantile(0.9)
     return ((actuals > top_25_actual) & (pd.Series(preds, index=actuals.index) > top_25_pred)).sum()
 
 baseline_hits = calculate_hits(baseline_preds, y_test)
@@ -118,7 +138,7 @@ results_df = pd.DataFrame({
     'Position': rookie_roi_df.loc[X_test.index, 'position'],
     'BMI_rel': X_test['BMI_rel'],
     'Age': X_test['age'],
-    'Gem_detected':predictions <= y_test
+    'Gem_detected':predictions >= y_test
 })
 
 # 3. Sort by Predicted ROI to find the "Model Favorites"

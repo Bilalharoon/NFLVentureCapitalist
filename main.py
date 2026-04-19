@@ -8,6 +8,7 @@ import numpy as np
 draft = nfl.load_draft_picks().to_pandas()
 players = nfl.load_players().to_pandas()
 contracts = nfl.load_contracts().to_pandas()
+combine = nfl.load_combine().to_pandas()
 
 # 2. Fix the DataType Mismatch (Pandas style)
 # We make sure otc_id is a string in both places for a clean merge
@@ -24,6 +25,8 @@ master_df = pd.merge(
     how="inner"
 )
 
+
+
 # 4. Join the result to Contracts
 final_df = pd.merge(
     master_df, 
@@ -36,12 +39,33 @@ final_df = pd.merge(
 rookie_roi_df = final_df[
     (final_df['year_signed'] == final_df['season']) & 
     (final_df['years'] == 4)
-]
+].copy()
 
+rookie_roi_df = rookie_roi_df[[
+    'pfr_id',
+    'pick',
+    'age',
+    'season',
+    'round',
+    'team_x',
+    'pfr_player_name',
+    'position',
+    'w_av',
+    'apy_cap_pct',
+    'weight_x',
+    'height_x',
+]]
+# 3. Keep only the athletic traits (and IDs for merging)
+safe_combine_cols = [
+    'pfr_id', 'forty', 'vertical', 'broad_jump', 'cone', 'shuttle', 'bench'
+]
+clean_combine = combine[safe_combine_cols].drop_duplicates(subset=['pfr_id'])
+
+# 4. Merge them together using the Pro Football Reference ID
+rookie_roi_df = pd.merge(rookie_roi_df, clean_combine, on='pfr_id', how='left')
 print(len(rookie_roi_df))
 
 # 6. Create your 'Profitability' Target Variable
-# Calculating AV per Million Dollars of contract value
 rookie_roi_df['roi_ratio'] = rookie_roi_df['w_av'] / rookie_roi_df['apy_cap_pct']
 rookie_roi_df['roi_ratio'] = rookie_roi_df['roi_ratio'].replace([np.inf, -np.inf], np.nan)
 rookie_roi_df = rookie_roi_df.dropna(subset=['roi_ratio'])
@@ -57,8 +81,6 @@ rookie_roi_df = rookie_roi_df.rename(columns={
     'position_x': 'position'
 })
 
-# 2. Drop the duplicate '_y' columns
-rookie_roi_df = rookie_roi_df.drop(columns=['height_y', 'weight_y'])
 
 rookie_roi_df.to_csv('outputs/rookie_roi.csv')
 
