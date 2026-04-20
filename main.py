@@ -25,8 +25,6 @@ master_df = pd.merge(
     how="inner"
 )
 
-
-
 # 4. Join the result to Contracts
 final_df = pd.merge(
     master_df, 
@@ -34,7 +32,6 @@ final_df = pd.merge(
     on="otc_id", 
     how="inner"
 )
-
 
 rookie_roi_df = final_df[
     (final_df['year_signed'] == final_df['season']) & 
@@ -51,6 +48,8 @@ rookie_roi_df = rookie_roi_df[[
     'pfr_player_name',
     'position',
     'w_av',
+    'dr_av',
+    'cfb_id',
     'apy_cap_pct',
     'weight_x',
     'height_x',
@@ -66,7 +65,7 @@ rookie_roi_df = pd.merge(rookie_roi_df, clean_combine, on='pfr_id', how='left')
 print(len(rookie_roi_df))
 
 # 6. Create your 'Profitability' Target Variable
-rookie_roi_df['roi_ratio'] = rookie_roi_df['w_av'] / rookie_roi_df['apy_cap_pct']
+rookie_roi_df['roi_ratio'] = rookie_roi_df['dr_av'] / rookie_roi_df['apy_cap_pct']
 rookie_roi_df['roi_ratio'] = rookie_roi_df['roi_ratio'].replace([np.inf, -np.inf], np.nan)
 rookie_roi_df = rookie_roi_df.dropna(subset=['roi_ratio'])
 
