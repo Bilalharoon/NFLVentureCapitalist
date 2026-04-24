@@ -2,19 +2,19 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestClassifier
-from catboost import CatBoostRegressor
-import xgboost as xgb
+from xgboost import XGBClassifier
 import numpy as np
 
 rookie_roi_df = pd.read_csv('./outputs/rookie_roi_cfb_merge.csv')
+# rookie_roi_df = rookie_roi_df[rookie_roi_df['draft_year_x'] >= 2000]
 # data cleainng
 # rookie_roi_df['draft_grade'] = rookie_roi_df['draft_grade'].fillna(rookie_roi_df['draft_grade'].median())
 # rookie_roi_df = rookie_roi_df[rookie_roi_df['pick'] > 50]
-rookie_roi_df = rookie_roi_df.drop_duplicates(subset=['pfr_player_name', 'pick'])
+rookie_roi_df = rookie_roi_df.drop_duplicates(subset=['pfr_id'])
 
-QUANTILE_THRESHOLD = 0.75
+QUANTILE_THRESHOLD = 0.9
 # position_dummies = pd.get_dummies(rookie_roi_df['position'])
 rookie_roi_df['BMI'] = (rookie_roi_df['weight'] * 703) / (rookie_roi_df['height']**2)
 
@@ -117,7 +117,6 @@ rookie_roi_df['roi_position_zscore'] = rookie_roi_df.groupby('position')['roi_ra
 pos_stats = rookie_roi_df.groupby('position')['roi_ratio'].agg(['mean', 'std']).reset_index()
 pos_stats.columns = ['Position', 'pos_mean_roi', 'pos_std_roi']
 
-
 X =   pd.concat([rookie_roi_df[final_features], position_dummies], axis=1)
 # X = rookie_roi_df[final_features]
 print(X.shape)
@@ -126,10 +125,20 @@ X[final_features].fillna(0)
 
 y = rookie_roi_df['vc_hit']
 # 2. Split into Training and Testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+# X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+pick_cutoff = 0
+year_cutoff = 2024
+X_train = X[rookie_roi_df['pick'] > pick_cutoff][rookie_roi_df['draft_year_x'] < year_cutoff]
+y_train = y[rookie_roi_df['pick'] > pick_cutoff][rookie_roi_df['draft_year_x'] < year_cutoff]
+# X_train = X[rookie_roi_df['draft_year_x'] < 2018]
+# y_train = y[rookie_roi_df['draft_year_x'] < 2018]
+X_test = X[rookie_roi_df['draft_year_x'] >= year_cutoff]
+y_test = y[rookie_roi_df['draft_year_x'] >= year_cutoff]
 
+print(f'train size: {len(y_train)}')
+print(f'test size; {len(y_test)}')
 
-cat_features = [X.columns.get_loc(col) for col in X.columns if col.startswith('pos_')]
+# cat_features = [X.columns.get_loc(col) for col in X.columns if col.startswith('pos_')]
 # model = CatBoostRegressor(
 #     loss_function='Quantile:alpha=0.67',
 #     iterations=300,
@@ -166,16 +175,25 @@ cat_features = [X.columns.get_loc(col) for col in X.columns if col.startswith('p
 #     max_depth=4,
 # )
 
-model = RandomForestClassifier(
-    n_estimators=500,
-    # max_depth=6,
-    class_weight='balanced',
-    # max_features='sqrt',
-    random_state=42
+# model = RandomForestClassifier(
+#     n_estimators=300,
+#     # max_depth=6,
+#     class_weight='balanced',
+#     # max_features='sqrt',
+#     random_state=42,
+#     # max_depth=8,
+#     # min_samples_leaf=5
+# )
+
+model = XGBClassifier(
+    n_estimators=200
 )
 
-model.fit(X_train, y_train)
+cal_model = CalibratedClassifierCV(model, method='isotonic', cv=3)
+cal_model.fit(X_train, y_train)
 
+
+model.fit(X_train, y_train)
 
 # 4. GET THE TRUTH: Which features matter?
 importances = pd.DataFrame({
@@ -237,9 +255,9 @@ results_df = pd.DataFrame({
     'Actual_ROI': rookie_roi_df.loc[X_test.index, 'roi_ratio'],
     'Pick': rookie_roi_df.loc[X_test.index, 'pick'],
     'Position': rookie_roi_df.loc[X_test.index, 'position'],
-    'Predicted_hit' : model.predict(X_test),
-    'Predicted_Probability' : model.predict_proba(X_test)[:, 1],
+    'Predicted_Probability' : cal_model.predict_proba(X_test)[:, 1],
     'Surplus_AV': rookie_roi_df.loc[X_test.index, 'surplus_av'],
+    'Expected_AV': rookie_roi_df.loc[X_test.index, 'expected_av'],
     'Actual_hit': y_test,
 })
 
@@ -249,19 +267,26 @@ results_df = pd.DataFrame({
 # results_df = results_df.drop(['pos_std_roi', 'pos_mean_roi'], axis=1)
 
 # 3. Sort by Predicted ROI to find the "Model Favorites"
-top_10_picks = results_df.sort_values(by='Predicted_Probability', ascending=False).head(10)
+# top_10_picks = results_df.sort_values(by='Predicted_Probability', ascending=False).head(10)
+k = int((1-QUANTILE_THRESHOLD) * len(results_df))  # top 10%
+top_preds = results_df.nlargest(k, 'Predicted_Probability')
+
+hit_rate = top_preds['Actual_hit'].mean()
+hits = top_preds['Actual_hit'].sum()
+
+model_hits = top_preds['Actual_hit'].sum()
 
 print("--- TOP 10 VENTURE CAPITALIST PICKS (TEST DATA) ---")
-print(top_10_picks[['Player', 'Position', 'Pick', 'Predicted_hit', 'Actual_hit', 'Predicted_Probability', 'Actual_ROI', 'Surplus_AV']])
+print(top_preds[['Player', 'Position', 'Pick', 'Actual_hit', 'Actual_ROI', 'Expected_AV', 'Surplus_AV']])
 results_df.to_csv('outputs/results.csv')
 
-top_k = results_df['Predicted_Probability'].quantile(QUANTILE_THRESHOLD)
-total_hits = len(results_df[results_df['Predicted_Probability'] > top_k])
+# top_k = results_df['Predicted_Probability'].quantile(QUANTILE_THRESHOLD)
+# total_hits = len(results_df[results_df['Predicted_Probability'] > top_k])
 
-top_pct = results_df[results_df['Predicted_Probability'] > top_k]
-accuracy = (top_pct['Predicted_hit'] == top_pct['Actual_hit']).sum()
+# top_pct = results_df[results_df['Predicted_Probability'] > top_k]
+# accuracy = (top_pct['Predicted_hit'] == top_pct['Actual_hit']).sum()
 
-print(f'Predicted {accuracy} out of {total_hits}. Hit rate at {(accuracy/total_hits):.2%}')
+print(f'Predicted {model_hits} out of {k}. Model hit rate at {(model_hits/k):.2%}')
 
 
 baseline_x_train = rookie_roi_df.loc[X_train.index][['pick']]
@@ -271,7 +296,11 @@ baseline_model = LinearRegression().fit(baseline_x_train, baseline_y_train)
 baseline_input = results_df.rename(columns={'Pick':'pick'})[['pick']]
 baseline_preds = baseline_model.predict(baseline_input)
 
-hits = calculate_hits(baseline_preds, results_df['Surplus_AV'], QUANTILE_THRESHOLD)
+results_df['baseline_pred'] = baseline_preds
 
-total_hits = len(results_df[results_df['Predicted_Probability'] > top_k]) # Ensure this is defined
-print(f'Heuristic predicted {hits} out of {total_hits}. Hit rate at {(hits/total_hits):.2%}')
+baseline_top = results_df.nlargest(k, 'baseline_pred')
+
+baseline_hits = baseline_top['Actual_hit'].sum()
+baseline_hit_rate = baseline_hits / k
+print(f'Heuristic predicted {baseline_hits} out of {k}. Hit rate at {(baseline_hit_rate):.2%}')
+# print(results_df['Actual_hit'].mean())

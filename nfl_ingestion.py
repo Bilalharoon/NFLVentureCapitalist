@@ -80,6 +80,7 @@ rookie_roi_df = final_df[[
     'w_av',
     'dr_av',
     'years',
+    'draft_year_x',
     'cfb_player_id',
     'apy_cap_pct',
     'weight_x',
